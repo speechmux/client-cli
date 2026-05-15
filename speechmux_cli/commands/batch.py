@@ -113,6 +113,8 @@ def _process_file(
                 vad_silence=client_options["vad_silence"],
                 vad_threshold=client_options["vad_threshold"],
                 session_timeout=dynamic_timeout,
+                engine_hint=client_options["engine_hint"],
+                vad_mode=client_options["vad_mode"],
             ):
                 result_count += 1
                 last_language = stream_result.language_code or last_language
@@ -185,6 +187,14 @@ def _process_file(
 @click.option("--profile", type=click.Choice(["realtime", "accurate"]), default=None, help="Decode profile (overrides global --profile).")
 @click.option("--vad-silence", "vad_silence", default=None, type=float, help="VAD silence duration in seconds (overrides global).")
 @click.option("--vad-threshold", "vad_threshold", default=None, type=float, help="VAD speech threshold (overrides global).")
+@click.option("--engine-hint", "engine_hint", default=None,
+              help="Engine endpoint id (overrides global --engine-hint).")
+@click.option(
+    "--vad-mode", "vad_mode",
+    type=click.Choice(["", "continue", "auto-end"]),
+    default=None,
+    help="VAD mode (overrides global --vad-mode).",
+)
 @click.pass_context
 def batch_cmd(
     click_context: click.Context,
@@ -200,6 +210,8 @@ def batch_cmd(
     profile: str | None,
     vad_silence: float | None,
     vad_threshold: float | None,
+    engine_hint: str | None,
+    vad_mode: str | None,
 ) -> None:
     """Transcribe all audio files in DIRECTORY in parallel."""
     client_options: ClientOptions = dict(click_context.obj)
@@ -213,6 +225,10 @@ def batch_cmd(
         client_options["vad_silence"] = vad_silence
     if vad_threshold is not None:
         client_options["vad_threshold"] = vad_threshold
+    if engine_hint is not None:
+        client_options["engine_hint"] = engine_hint
+    if vad_mode is not None:
+        client_options["vad_mode"] = vad_mode
 
     try:
         files = _collect_files(directory)

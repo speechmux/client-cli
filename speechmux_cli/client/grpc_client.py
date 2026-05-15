@@ -13,6 +13,22 @@ from stt_proto.client.v1 import client_pb2, client_pb2_grpc
 
 _ERR_CODE_RE = re.compile(r"(ERR\d{4})")
 
+
+def _vad_mode_enum(mode: str) -> int:
+    """Convert a VAD mode string to the corresponding proto enum value.
+
+    Args:
+        mode: One of "auto-end", "continue", or "" (unspecified).
+
+    Returns:
+        The matching ``VADMode`` proto enum integer.
+    """
+    if mode == "auto-end":
+        return client_pb2.VAD_MODE_AUTO_END
+    if mode == "continue":
+        return client_pb2.VAD_MODE_CONTINUE
+    return client_pb2.VAD_MODE_UNSPECIFIED
+
 # gRPC status codes that are safe to retry (no audio consumed yet)
 _RETRYABLE_GRPC_CODES = {
     grpc.StatusCode.UNAVAILABLE,
@@ -48,6 +64,8 @@ class StreamResult:
     latency_sec: float = field(default=0.0)
     rtf: float = field(default=0.0)
     utterance_index: int = field(default=0)
+    start_sec: float = field(default=0.0)
+    end_sec: float = field(default=0.0)
 
     @property
     def display_text(self) -> str:
@@ -181,6 +199,8 @@ class SpeechMuxClient:
         vad_silence: float = 0.8,
         vad_threshold: float = 0.5,
         session_timeout: float = 300.0,
+        engine_hint: str = "",
+        vad_mode: str = "",
     ) -> Iterator[StreamResult]:
         """Stream audio chunks and yield recognition results.
 
@@ -194,6 +214,9 @@ class SpeechMuxClient:
             vad_silence: VAD silence duration threshold in seconds.
             vad_threshold: VAD speech probability threshold.
             session_timeout: gRPC deadline for the entire session in seconds.
+            engine_hint: Endpoint id to route to (e.g. "faster-whisper"). Empty = normal routing.
+            vad_mode: VAD session mode: "continue" (default), "auto-end" (close after first
+                utterance), or "" (unspecified).
 
         Yields:
             StreamResult for each result received from the server.
@@ -233,8 +256,10 @@ class SpeechMuxClient:
                         language_code=language,
                         task=task_enum,
                         decode_profile=profile_enum,
+                        engine_hint=engine_hint,
                     ),
                     vad_config=client_pb2.VADConfig(
+                        mode=_vad_mode_enum(vad_mode),
                         silence_duration=vad_silence,
                         threshold=vad_threshold,
                     ),
@@ -292,4 +317,6 @@ class SpeechMuxClient:
                     latency_sec=result_metadata.latency_sec if result_metadata else 0.0,
                     rtf=result_metadata.real_time_factor if result_metadata else 0.0,
                     utterance_index=result_metadata.utterance_index if result_metadata else 0,
+                    start_sec=recognition_result.start_sec,
+                    end_sec=recognition_result.end_sec,
                 )

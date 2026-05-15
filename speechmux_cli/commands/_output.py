@@ -43,6 +43,8 @@ def print_result(
             "latency_sec": result.latency_sec,
             "rtf": result.rtf,
             "utterance_index": result.utterance_index,
+            "start_sec": result.start_sec,
+            "end_sec": result.end_sec,
         }
         print(json.dumps(output_object, ensure_ascii=False))
     else:

@@ -38,6 +38,21 @@ from speechmux_cli.commands.mic import mic_cmd
     show_default=True,
     help="VAD speech probability threshold.",
 )
+@click.option(
+    "--engine-hint",
+    "engine_hint",
+    default="",
+    envvar="SPEECHMUX_ENGINE_HINT",
+    help="Route to a specific engine endpoint id (e.g. faster-whisper).",
+)
+@click.option(
+    "--vad-mode",
+    "vad_mode",
+    type=click.Choice(["", "continue", "auto-end"]),
+    default="",
+    show_default=False,
+    help="VAD session mode: continue (default) or auto-end (close after first utterance).",
+)
 @click.option("--connect-timeout", default=10.0, show_default=True, help="Connection timeout (s).")
 @click.option(
     "--session-timeout",
@@ -57,6 +72,8 @@ def cli(
     profile: str,
     vad_silence: float,
     vad_threshold: float,
+    engine_hint: str,
+    vad_mode: str,
     connect_timeout: float,
     session_timeout: float,
     tls: bool,
@@ -73,6 +90,8 @@ def cli(
             "profile": profile,
             "vad_silence": vad_silence,
             "vad_threshold": vad_threshold,
+            "engine_hint": engine_hint,
+            "vad_mode": vad_mode,
             "connect_timeout": connect_timeout,
             "session_timeout": session_timeout,
             "tls": tls,

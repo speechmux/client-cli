@@ -13,7 +13,9 @@ from speechmux_cli.client.grpc_client import (
     StreamResult,
     _extract_err_code,
     _is_retryable_grpc,
+    _vad_mode_enum,
 )
+from stt_proto.client.v1 import client_pb2
 
 
 # ── StreamResult.display_text ─────────────────────────────────────────────────
@@ -417,3 +419,63 @@ def test_stream_raises_when_server_closes_immediately():
 
     with pytest.raises(SpeechMuxError, match="session_created"):
         list(client.stream(iter([])))
+
+
+# ── engine_hint and vad_mode forwarding ──────────────────────────────────────
+
+
+def test_stream_engine_hint_forwarded_in_recognition_config():
+    """engine_hint must appear in RecognitionConfig of the first request."""
+    client, mock_stub = _make_client_with_mock_stub()
+
+    session_resp = _make_session_created_response()
+    mock_stub.StreamingRecognize.return_value = iter([session_resp])
+
+    list(client.stream(iter([]), engine_hint="faster-whisper"))
+
+    mock_stub.StreamingRecognize.assert_called_once()
+    call_args = mock_stub.StreamingRecognize.call_args
+    requests = list(call_args[0][0])  # first positional arg is the request iterator
+
+    first_request = requests[0]
+    assert first_request.session_config.recognition_config.engine_hint == "faster-whisper"
+
+
+def test_stream_vad_mode_auto_end_mapped_to_proto_enum():
+    """vad_mode="auto-end" must map to VAD_MODE_AUTO_END in VADConfig."""
+    assert _vad_mode_enum("auto-end") == client_pb2.VAD_MODE_AUTO_END
+
+
+def test_stream_vad_mode_empty_mapped_to_unspecified():
+    """vad_mode="" must map to VAD_MODE_UNSPECIFIED in VADConfig."""
+    assert _vad_mode_enum("") == client_pb2.VAD_MODE_UNSPECIFIED
+
+
+def test_stream_result_start_sec_end_sec_populated():
+    """StreamResult.start_sec and end_sec must be populated from the proto response."""
+    client, mock_stub = _make_client_with_mock_stub()
+
+    session_resp = _make_session_created_response()
+
+    recognition_result = MagicMock()
+    recognition_result.is_final = True
+    recognition_result.text = "hi"
+    recognition_result.committed_text = ""
+    recognition_result.unstable_text = ""
+    recognition_result.audio_duration = 2.0
+    recognition_result.language_code = "en"
+    recognition_result.start_sec = 1.5
+    recognition_result.end_sec = 3.2
+    recognition_result.meta = None
+
+    result_resp = MagicMock()
+    result_resp.HasField.side_effect = lambda f: f == "result"
+    result_resp.result = recognition_result
+
+    mock_stub.StreamingRecognize.return_value = iter([session_resp, result_resp])
+
+    results = list(client.stream(iter([])))
+
+    assert len(results) == 1
+    assert results[0].start_sec == pytest.approx(1.5)
+    assert results[0].end_sec == pytest.approx(3.2)

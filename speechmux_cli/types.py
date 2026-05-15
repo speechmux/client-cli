@@ -20,6 +20,8 @@ class ClientOptions(TypedDict):
         session_timeout: Maximum session duration in seconds.
         tls: Whether to enable TLS.
         tls_ca_file: Path to CA certificate file for TLS, or None.
+        engine_hint: Endpoint id for routing hint; empty string means no hint.
+        vad_mode: VAD session mode: "continue", "auto-end", or "" (unspecified).
     """
 
     server: str
@@ -33,3 +35,5 @@ class ClientOptions(TypedDict):
     session_timeout: float
     tls: bool
     tls_ca_file: str | None
+    engine_hint: str
+    vad_mode: str

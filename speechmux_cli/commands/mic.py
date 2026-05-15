@@ -29,6 +29,14 @@ CHUNK_MS = 80  # mic chunk size — smaller for lower latency
 @click.option("--profile", type=click.Choice(["realtime", "accurate"]), default=None, help="Decode profile (overrides global --profile).")
 @click.option("--vad-silence", "vad_silence", default=None, type=float, help="VAD silence duration in seconds (overrides global).")
 @click.option("--vad-threshold", "vad_threshold", default=None, type=float, help="VAD speech threshold (overrides global).")
+@click.option("--engine-hint", "engine_hint", default=None,
+              help="Engine endpoint id (overrides global --engine-hint).")
+@click.option(
+    "--vad-mode", "vad_mode",
+    type=click.Choice(["", "continue", "auto-end"]),
+    default=None,
+    help="VAD mode (overrides global --vad-mode).",
+)
 @click.pass_context
 def mic_cmd(
     click_context: click.Context,
@@ -39,6 +47,8 @@ def mic_cmd(
     profile: str | None,
     vad_silence: float | None,
     vad_threshold: float | None,
+    engine_hint: str | None,
+    vad_mode: str | None,
 ) -> None:
     """Transcribe microphone input in real time. Press Ctrl+C to stop."""
     try:
@@ -60,6 +70,10 @@ def mic_cmd(
         client_options["vad_silence"] = vad_silence
     if vad_threshold is not None:
         client_options["vad_threshold"] = vad_threshold
+    if engine_hint is not None:
+        client_options["engine_hint"] = engine_hint
+    if vad_mode is not None:
+        client_options["vad_mode"] = vad_mode
 
     try:
         client = SpeechMuxClient(
@@ -144,6 +158,8 @@ def mic_cmd(
                     vad_silence=client_options["vad_silence"],
                     vad_threshold=client_options["vad_threshold"],
                     session_timeout=client_options["session_timeout"],
+                    engine_hint=client_options["engine_hint"],
+                    vad_mode=client_options["vad_mode"],
                 ):
                     result_count += 1
                     committed_so_far = print_result(
