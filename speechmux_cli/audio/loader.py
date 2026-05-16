@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+import subprocess
 from collections.abc import Iterator
 from math import gcd
 from pathlib import Path
@@ -17,6 +19,95 @@ MAX_FILE_SIZE_BYTES = 500 * 1024 * 1024  # 500 MB
 
 class AudioLoadError(Exception):
     """Raised when an audio file cannot be loaded or validated."""
+
+
+def _ffmpeg_probe(path: Path) -> float:
+    """Return audio duration in seconds by probing with ffmpeg.
+
+    Args:
+        path: Path to the audio file.
+
+    Returns:
+        Duration in seconds.
+
+    Raises:
+        AudioLoadError: If ffmpeg is not found or cannot parse the file.
+    """
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-i", str(path)],
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError as error:
+        raise AudioLoadError(
+            f"ffmpeg not found — install ffmpeg to support this format: {path}"
+        ) from error
+    # ffmpeg writes stream info to stderr even when no output is given.
+    match = re.search(r"Duration:\s*(\d+):(\d+):(\d+\.?\d*)", result.stderr)
+    if not match:
+        raise AudioLoadError(
+            f"Cannot read audio file (unsupported format or not audio): {path}"
+        )
+    hours, minutes, seconds = match.groups()
+    return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+
+
+def _ffmpeg_chunks(path: Path, chunk_ms: int) -> Iterator[bytes]:
+    """Decode audio file to PCM S16LE chunks via ffmpeg.
+
+    Decodes directly to 16 kHz mono S16LE, bypassing soundfile and scipy.
+
+    Args:
+        path: Path to the audio file.
+        chunk_ms: Target chunk duration in milliseconds.
+
+    Yields:
+        PCM S16LE bytes of approximately chunk_ms milliseconds each.
+
+    Raises:
+        AudioLoadError: If ffmpeg is not found or exits with an error.
+    """
+    bytes_per_chunk = TARGET_SAMPLE_RATE * 2 * chunk_ms // 1000  # int16 = 2 bytes
+    try:
+        proc = subprocess.Popen(
+            [
+                "ffmpeg", "-hide_banner", "-loglevel", "error",
+                "-i", str(path),
+                "-f", "s16le", "-ac", "1", "-ar", str(TARGET_SAMPLE_RATE),
+                "pipe:1",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except FileNotFoundError as error:
+        raise AudioLoadError(
+            f"ffmpeg not found — install ffmpeg to support this format: {path}"
+        ) from error
+
+    assert proc.stdout is not None
+    buffer = b""
+    try:
+        while True:
+            chunk = proc.stdout.read(bytes_per_chunk)
+            if not chunk:
+                break
+            buffer += chunk
+            while len(buffer) >= bytes_per_chunk:
+                yield buffer[:bytes_per_chunk]
+                buffer = buffer[bytes_per_chunk:]
+    finally:
+        proc.stdout.close()
+        proc.wait()
+
+    if buffer:
+        yield buffer
+
+    if proc.returncode != 0:
+        stderr_output = proc.stderr.read().decode(errors="replace") if proc.stderr else ""
+        raise AudioLoadError(
+            f"ffmpeg decode failed for {path}: {stderr_output.strip()}"
+        )
 
 
 def _resample(audio: np.ndarray, source_rate: int, target_rate: int) -> np.ndarray:
@@ -73,6 +164,8 @@ class AudioLoader:
         self._max_file_size = max_file_size
         self._sample_rate: int | None = None
         self._duration_sec: float | None = None
+        self._use_ffmpeg: bool = False
+        self._validated: bool = False
 
     def validate(self) -> None:
         """Validate file existence, size, and format.
@@ -82,6 +175,8 @@ class AudioLoader:
         Raises:
             AudioLoadError: If the file is missing, empty, too large, or unreadable.
         """
+        if self._validated:
+            return
         if not self._path.exists():
             raise AudioLoadError(f"File not found: {self._path}")
         if not self._path.is_file():
@@ -101,10 +196,14 @@ class AudioLoader:
             audio_info = sf.info(str(self._path))
             self._sample_rate = audio_info.samplerate
             self._duration_sec = audio_info.duration
-        except Exception as soundfile_error:
-            raise AudioLoadError(
-                f"Cannot read audio file (unsupported format?): {self._path}\n  {soundfile_error}"
-            ) from soundfile_error
+            self._use_ffmpeg = False
+        except Exception:
+            # soundfile cannot handle this container (e.g. WebM, MP4).
+            # Fall back to ffmpeg for probe and decode.
+            self._duration_sec = _ffmpeg_probe(self._path)
+            self._sample_rate = TARGET_SAMPLE_RATE
+            self._use_ffmpeg = True
+        self._validated = True
 
     @property
     def duration_sec(self) -> float:
@@ -141,6 +240,10 @@ class AudioLoader:
             AudioLoadError: If the file cannot be read.
         """
         self.validate()
+
+        if self._use_ffmpeg:
+            yield from _ffmpeg_chunks(self._path, self._chunk_ms)
+            return
 
         samples_per_chunk = max(1, TARGET_SAMPLE_RATE * self._chunk_ms // 1000)
         source_rate = self._sample_rate or TARGET_SAMPLE_RATE
