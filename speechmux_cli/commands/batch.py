@@ -15,9 +15,10 @@ import grpc
 from speechmux_cli.audio.loader import AudioLoader, AudioLoadError
 from speechmux_cli.client.grpc_client import SpeechMuxClient, SpeechMuxError
 from speechmux_cli.commands._output import format_summary, print_error
+from speechmux_cli.commands._srt import SrtWriter
 from speechmux_cli.types import ClientOptions
 
-SUPPORTED_EXTENSIONS = {".wav", ".flac", ".ogg", ".mp3", ".m4a", ".opus"}
+SUPPORTED_EXTENSIONS = {".wav", ".flac", ".ogg", ".mp3", ".m4a", ".opus", ".webm"}
 
 
 @dataclass
@@ -66,6 +67,7 @@ def _process_file(
     output_dir: Path | None,
     chunk_ms: int,
     on_error: str,  # noqa: ARG001
+    write_srt: bool = False,
 ) -> FileResult:
     result_path = output_dir / (path.stem + ".json") if output_dir else None
 
@@ -100,6 +102,7 @@ def _process_file(
     final_text = ""
     last_language = ""
     result_count = 0
+    srt_writer = SrtWriter() if write_srt else None
     start_time = time.perf_counter()
 
     try:
@@ -122,6 +125,12 @@ def _process_file(
                     committed_text = stream_result.committed_text
                 if stream_result.is_final:
                     final_text = stream_result.text or stream_result.committed_text
+                    if srt_writer is not None:
+                        srt_writer.add(
+                            stream_result.start_sec,
+                            stream_result.end_sec,
+                            final_text,
+                        )
 
     except SpeechMuxError as speech_mux_error:
         return FileResult(
@@ -155,6 +164,10 @@ def _process_file(
     if result_path:
         result_path.parent.mkdir(parents=True, exist_ok=True)
         result_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2))
+
+    if srt_writer is not None and srt_writer.entries:
+        srt_path = path.with_suffix(".srt")
+        srt_writer.write(srt_path)
 
     return FileResult(
         path=str(path),
@@ -195,6 +208,8 @@ def _process_file(
     default=None,
     help="VAD mode (overrides global --vad-mode).",
 )
+@click.option("--srt", "write_srt", is_flag=True, default=False,
+              help="Write SRT subtitle file alongside each audio file.")
 @click.pass_context
 def batch_cmd(
     click_context: click.Context,
@@ -212,6 +227,7 @@ def batch_cmd(
     vad_threshold: float | None,
     engine_hint: str | None,
     vad_mode: str | None,
+    write_srt: bool,
 ) -> None:
     """Transcribe all audio files in DIRECTORY in parallel."""
     client_options: ClientOptions = dict(click_context.obj)
@@ -262,6 +278,7 @@ def batch_cmd(
                 output_dir=output_dir,
                 chunk_ms=chunk_ms,
                 on_error=on_error,
+                write_srt=write_srt,
             )
             futures_map[future] = path
 

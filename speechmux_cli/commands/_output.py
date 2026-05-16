@@ -8,11 +8,33 @@ import sys
 from speechmux_cli.client.grpc_client import StreamResult
 
 
+def _fmt_ts(seconds: float, minutes_width: int = 1) -> str:
+    total_s = int(seconds)
+    minutes = total_s // 60
+    secs = total_s % 60
+    millis = int(round((seconds % 1) * 1000))
+    return f"{minutes:0{minutes_width}d}:{secs:02d}.{millis:03d}"
+
+
+def ts_minutes_width(total_sec: float) -> int:
+    """Return the minutes field width needed to display timestamps for a given total duration.
+
+    Args:
+        total_sec: Total audio duration in seconds.
+
+    Returns:
+        Number of digits required to represent the maximum minute value.
+    """
+    total_minutes = max(1, int(total_sec / 60))
+    return len(str(total_minutes))
+
+
 def print_result(
     result: StreamResult,
     *,
     json_mode: bool = False,
     committed_so_far: str = "",
+    min_width: int = 1,
 ) -> str:
     """Print a recognition result to stdout and return the updated committed text.
 
@@ -51,7 +73,12 @@ def print_result(
         language_tag = f"[{result.language_code}]" if result.language_code else ""
         if result.is_final:
             final_display = result.text or f"{committed} {unstable}".strip()
-            print(f"[{kind}] {language_tag} {final_display}", flush=True)
+            ts_tag = ""
+            if result.end_sec > 0:
+                ts_start = _fmt_ts(result.start_sec, min_width)
+                ts_end = _fmt_ts(result.end_sec, min_width)
+                ts_tag = f" [{ts_start} → {ts_end}]"
+            print(f"[{kind}]{ts_tag} {language_tag} {final_display}", flush=True)
         else:
             # Show committed in normal weight, unstable dimmed.
             partial_display = committed

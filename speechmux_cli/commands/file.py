@@ -17,7 +17,9 @@ from speechmux_cli.commands._output import (
     print_error,
     print_no_speech,
     print_result,
+    ts_minutes_width,
 )
+from speechmux_cli.commands._srt import SrtWriter
 from speechmux_cli.types import ClientOptions
 
 
@@ -40,6 +42,10 @@ from speechmux_cli.types import ClientOptions
     default=None,
     help="VAD mode (overrides global --vad-mode).",
 )
+@click.option(
+    "--srt", "srt_path", default=None, metavar="PATH",
+    help="Write SRT subtitles to PATH ('-' for stdout).",
+)
 @click.pass_context
 def file_cmd(
     click_context: click.Context,
@@ -55,6 +61,7 @@ def file_cmd(
     vad_threshold: float | None,
     engine_hint: str | None,
     vad_mode: str | None,
+    srt_path: str | None,
 ) -> None:
     """Transcribe a single audio file (WAV, FLAC, OGG, MP3)."""
     client_options: ClientOptions = dict(click_context.obj)
@@ -92,6 +99,9 @@ def file_cmd(
         print_error(str(connection_error))
         sys.exit(1)
 
+    srt_writer = SrtWriter() if srt_path else None
+    ts_width = ts_minutes_width(loader.duration_sec)
+
     committed_so_far = ""
     result_count = 0
     final_text = ""
@@ -124,8 +134,11 @@ def file_cmd(
                 last_language = result.language_code or last_language
                 if result.is_final:
                     final_text = result.text or result.committed_text
+                    if srt_writer is not None:
+                        srt_writer.add(result.start_sec, result.end_sec, final_text)
                 committed_so_far = print_result(
-                    result, json_mode=json_mode, committed_so_far=committed_so_far
+                    result, json_mode=json_mode,
+                    committed_so_far=committed_so_far, min_width=ts_width,
                 )
 
     except SpeechMuxError as speech_mux_error:
@@ -143,6 +156,9 @@ def file_cmd(
 
     if result_count == 0:
         print_no_speech()
+
+    if srt_writer is not None and srt_writer.entries:
+        srt_writer.write(srt_path)  # type: ignore[arg-type]
 
     if metrics:
         summary = format_summary(
